@@ -68,7 +68,7 @@ inline void setup_radio() {
 
     // If you are using a high power RF69 eg RFM69HW, you *must* set a Tx power with the
     // ishighpowermodule flag set like this:
-    rf69.setTxPower(20, true);  // range from 14-20 for power, 2nd arg must be true for 69HCW
+    rf69.setTxPower(20, true);  // range from -2 to +20 for power, 2nd arg must be true for 69HCW
 
     // The encryption key has to be shared betweeen all radios
     uint8_t key[] = { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
@@ -88,19 +88,34 @@ void loop() {
         // The identifier of the sending radio
         uint8_t from;
 
+        // The RSSI of the received message
+        // Suitable for returing to the sender as feedback
+        int16_t rssi;
+
         if(rf69_manager.recvfromAck(buf, &len, &from)) {
             // zero out remaining string
             buf[len] = 0;
 
+            rssi = rf69.lastRssi();
+
             // Print the message payload
+            // Note, this isn't debug printing, this is the actual
+            // output that's being monitored for on the host machine
             Serial.print("{");
             print_json_val("_sender_id", from);
             Serial.print(",");
-            print_json_val("_rssi", rf69.lastRssi());
+            print_json_val("_rssi", rssi);
             Serial.print(",");
             print_json_val("msg", (char*)buf);
-
             Serial.println("}");
+
+            // Send the RSSI level back to the sender, so they can
+            // tune the radio power
+            String radiopacket = String("RSSI ");
+            radiopacket += rssi;
+            if(! rf69_manager.sendtoWait((uint8_t*)radiopacket.c_str(), radiopacket.length(), from)) {
+                Serial.println("*WARNING: RSSI response failed.");
+            }
 
             // Blink LED 3 times, 40ms between blinks
             blink(LED, 40, 3);

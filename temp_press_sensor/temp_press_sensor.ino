@@ -39,6 +39,17 @@ RHReliableDatagram rf69_manager(rf69, MY_ADDRESS);
 // I2C BME280 device
 Adafruit_BME280 bme;
 
+// A buffer into which we'll write messages
+// from sending radios
+uint8_t buf[RH_RF69_MAX_MESSAGE_LEN];
+
+// The transmitter power, calculated from
+// the server's response containing it's RSSI.
+int8_t power;
+
+// The target RSSI which the radio will adjust its power
+// to try to reach.
+#define TARGET_RSSI     -60
 
 // Set up the debug print macros
 #ifdef DEBUG_PRINT
@@ -90,9 +101,12 @@ inline void setup_radio() {
         while (1);
     }
 
+    // On setup, initialize the transmitter power to max, to start with
+    power = 20;
+
     // If you are using a high power RF69 eg RFM69HW, you *must* set a Tx power with the
     // ishighpowermodule flag set like this:
-    rf69.setTxPower(20, true);  // range from 14-20 for power, 2nd arg must be true for 69HCW
+    rf69.setTxPower(power, true);  // range from 14-20 for power, 2nd arg must be true for 69HCW
 
     // The encryption key has to be shared betweeen all radios
     uint8_t key[] = { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
@@ -143,8 +157,45 @@ void loop() {
     radiopacket += bme.readHumidity();     // % RH
     SERIAL_PRINTLN((String("*INFO: ") + radiopacket).c_str());
 
-    // Send the payload
-    if(! rf69_manager.sendtoWait((uint8_t*)radiopacket.c_str(), radiopacket.length(), DEST_ADDRESS)) {
+    // Send the payload to the base station
+    if(rf69_manager.sendtoWait((uint8_t*)radiopacket.c_str(), radiopacket.length(), DEST_ADDRESS)) {
+
+        // Now wait for the RSSI feedback response from the server
+        uint8_t len = sizeof(buf);
+        uint8_t from;
+        if (rf69_manager.recvfromAckTimeout(buf, &len, 2000, &from)) {
+            SERIAL_PRINT("*INFO: got reply from : 0x");
+            SERIAL_PRINT(from, HEX);
+            SERIAL_PRINT(": ");
+            SERIAL_PRINTLN((char*)buf);
+
+            // Calculate the best radio strength, for use in the next transmission
+            // If the RSSI is above the target, drop the power by 1,
+            // if it's below the target, raise the power by 1.
+            long rssi = String(buf[5]).toInt();
+
+            SERIAL_PRINTLN(rssi);  // TODO - remove this once we're sure it works
+
+            if(rssi > TARGET_RSSI) {
+                power--;
+            } else if( rssi < TARGET_RSSI) {
+                power++;
+            }
+
+            // Bound the power within the allowed range
+            if(power < 14 ) {
+                power = 14;
+            } else if(power > 20) {
+                power = 20;
+            }
+
+            // Set the transmitter power, for the next transmission
+            rf69.setTxPower(power, true);  // range from 14-20 for power, 2nd arg must be true for 69HCW
+
+        } else {
+            SERIAL_PRINTLN("*WARNING: No reply from the server");
+        }
+    } else {
         SERIAL_PRINTLN("*WARNING: Sending failed (no ack)");
         blink(LED, 40, 5);
     }
