@@ -52,6 +52,11 @@ int8_t power;
 // to try to reach.
 #define TARGET_RSSI     -60
 
+// define the dBm low and high limit settings, for the radio
+// transmitter
+#define RADIO_POWER_LIMIT_LOW -2
+#define RADIO_POWER_LIMIT_HIGH 20
+
 // Set up the debug print macros
 #ifdef DEBUG_PRINT
 #define SERIAL_PRINT( ... )       Serial.print( __VA_ARGS__ );
@@ -103,7 +108,7 @@ inline void setup_radio() {
     }
 
     // On setup, initialize the transmitter power to max, to start with
-    power = 20;
+    power = RADIO_POWER_LIMIT_HIGH;
 
     // If you are using a high power RF69 eg RFM69HW, you *must* set a Tx power with the
     // ishighpowermodule flag set like this:
@@ -138,6 +143,46 @@ inline void setup_sensor() {
                     Adafruit_BME280::FILTER_OFF   );
 }
 
+inline void increase_power() {
+    SERIAL_PRINTLN("*INFO: Increasing Power");
+    SERIAL_PRINT("*INFO: From: ");
+    SERIAL_PRINT(power);
+    SERIAL_PRINTLN(" dBm");
+
+    power++;
+
+    // Bound the power within the allowed range
+    if(power < RADIO_POWER_LIMIT_LOW ) {
+        power = RADIO_POWER_LIMIT_LOW;
+    } else if(power > RADIO_POWER_LIMIT_HIGH) {
+        power = RADIO_POWER_LIMIT_HIGH;
+    }
+
+    SERIAL_PRINT("*INFO: To: ");
+    SERIAL_PRINT(power);
+    SERIAL_PRINTLN(" dBm");
+}
+
+inline void decrease_power() {
+    SERIAL_PRINTLN("*INFO: Decreasing Power");
+    SERIAL_PRINT("*INFO: From: ");
+    SERIAL_PRINT(power);
+    SERIAL_PRINTLN(" dBm");
+
+    power--;
+
+    // Bound the power within the allowed range
+    if(power < RADIO_POWER_LIMIT_LOW ) {
+        power = RADIO_POWER_LIMIT_LOW;
+    } else if(power > RADIO_POWER_LIMIT_HIGH) {
+        power = RADIO_POWER_LIMIT_HIGH;
+    }
+
+    SERIAL_PRINT("*INFO: To: ");
+    SERIAL_PRINT(power);
+    SERIAL_PRINTLN(" dBm");
+}
+
 void loop() {
     // Read from the battery voltage
     float vbat = read_battery_voltage();
@@ -170,42 +215,23 @@ void loop() {
             SERIAL_PRINT(": ");
             SERIAL_PRINTLN((char*)buf);
 
-            // Calculate the best radio strength, for use in the next transmission
-            // If the RSSI is above the target, drop the power by 1,
-            // if it's below the target, raise the power by 1.
             long rssi = String((char*)buf).substring(4).toInt();
-            SERIAL_PRINT("Interpreted RSSI: ");
-            SERIAL_PRINTLN(rssi);
-
-            SERIAL_PRINT("Previous Power: ");
-            SERIAL_PRINT(power);
-            SERIAL_PRINTLN(" dBm");
 
             if(rssi > TARGET_RSSI) {
-                power--;
+                decrease_power();
             } else if( rssi < TARGET_RSSI) {
-                power++;
+                increase_power();
             }
-
-            // Bound the power within the allowed range
-            if(power < -2 ) {
-                power = -2;
-            } else if(power > 20) {
-                power = 20;
-            }
-
-            SERIAL_PRINT("New Power: ");
-            SERIAL_PRINT(power);
-            SERIAL_PRINTLN(" dBm");
 
             // Set the transmitter power, for the next transmission
             rf69.setTxPower(power, true);  // range from -2 to 20 for power, 2nd arg must be true for 69HCW
 
         } else {
-            SERIAL_PRINTLN("*WARNING: No reply from the server");
+            SERIAL_PRINTLN("*WARNING: No RSSI response message from server");
         }
     } else {
-        SERIAL_PRINTLN("*WARNING: Sending failed (no ack)");
+        SERIAL_PRINTLN("*WARNING: Sending failed (no ack), increasing power");
+        increase_power();
         blink(LED, 40, 5);
     }
 
