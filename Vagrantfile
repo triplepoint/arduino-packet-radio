@@ -40,17 +40,15 @@
 #
 # From here, continue on to use the arduino-cli command from their documentation:
 # See: https://github.com/arduino/arduino-cli#getting-started
-# It's likely you should just become root and stay there, instead of operating as
-# the vagrant user:
-#   sudo su
 #
 # You'll want to be able to:
 #   - detect your board
 #   - verify you can talk to the board over a serial connection (screen, cat, etc)
-#       - `cat /dev/ttyACM0` is a decent place to start
+#       - `cat /dev/ttyACM0` is a decent place to start.  You might need to reset your board.
 #   - load the core modules for your board
 #   - load any libraries you need for your code
-#       - if you're root, libraries can be manually placed in `/root/Arduino/libraries/`
+#       - libraries can be manually placed in `~/Arduino/libraries/`, which is mounted from the
+#          host by default (see the Vagrantfile config below)
 #
 # When it comes time to compile a sketch and load it, you can do something like:
 #   arduino-cli compile -u -p /dev/ttyACM0 --fqbn adafruit:avr:feather32u4 blink
@@ -66,6 +64,11 @@ Vagrant.configure("2") do |config|
     config.vm.box = "ubuntu/bionic64"
     config.vm.box_check_update = true
     config.vm.boot_timeout = 300
+
+    # You might need to adjust this path, or remove it all-together,
+    # I'm using it to sync my host's Arduino library directory to
+    # the VM.
+    config.vm.synced_folder "/Volumes/workspace/arduino/", "/arduino/"
 
     config.vm.provider "virtualbox" do |v|
         v.memory = "1024" # in MB
@@ -100,14 +103,21 @@ $script = <<-SCRIPT
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -yq linux-image-extra-virtual
 
-# The showports branch let's you see attached boards, even when they're not
-# recognized.  Hopefully this makes it into the mainline branch, and we can
-# go back to just installing the official release.
-wget https://github.com/arduino/arduino-cli/releases/download/0.5.0-showports/arduino-cli_0.5.0-showports_Linux_64bit.tar.gz
-tar -xvf arduino-cli_0.5.0-showports_Linux_64bit.tar.gz
-ln -s /home/vagrant/arduino-cli /usr/local/bin/arduino-cli
+# Comment this out if you're not mouting an Arduino directory from the host machine
+ln -s /arduino /home/vagrant/Arduino
 
-# The `dialout` group controls access to the serial devices
+wget -q https://github.com/arduino/arduino-cli/releases/download/0.6.0/arduino-cli_0.6.0_Linux_64bit.tar.gz
+mkdir arduino-cli-0.6.0
+tar -xvf arduino-cli_0.6.0_Linux_64bit.tar.gz -C arduino-cli-0.6.0/
+ln -s /home/vagrant/arduino-cli-0.6.0/arduino-cli /usr/local/bin/arduino-cli
+
+### We can use the nightly builds instead, if something breaks with arduino-cli ###
+# wget -q https://downloads.arduino.cc/arduino-cli/nightly/arduino-cli_nightly-latest_Linux_64bit.tar.gz
+# mkdir arduino-cli-nightly
+# tar -xvf arduino-cli_nightly-latest_Linux_64bit.tar.gz -C arduino-cli-nightly/
+# ln -s /home/vagrant/arduino-cli-nightly/arduino-cli /usr/local/bin/arduino-cli
+
+# The `dialout` user group controls access to the serial devices
 adduser vagrant dialout
 adduser root dialout
 SCRIPT
