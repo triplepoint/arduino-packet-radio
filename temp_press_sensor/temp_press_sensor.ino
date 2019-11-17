@@ -13,6 +13,7 @@
 
 // Are we doing debug printing to Serial?
 // #define DEBUG_PRINT 1
+// #define DEBUG_WARM_SLEEP 1
 
 // Radio frequency, must match the frequency of other radios.
 #define RF69_FREQ 915.0
@@ -106,7 +107,7 @@ inline void setup_radio() {
 
     // If you are using a high power RF69 eg RFM69HW, you *must* set a Tx power with the
     // ishighpowermodule flag set like this:
-    rf69.setTxPower(power, true);  // range from 14-20 for power, 2nd arg must be true for 69HCW
+    rf69.setTxPower(power, true);  // range from -2 to 20 for power, 2nd arg must be true for 69HCW
 
     // The encryption key has to be shared betweeen all radios
     uint8_t key[] = { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
@@ -172,9 +173,13 @@ void loop() {
             // Calculate the best radio strength, for use in the next transmission
             // If the RSSI is above the target, drop the power by 1,
             // if it's below the target, raise the power by 1.
-            long rssi = String(buf[5]).toInt();
+            long rssi = String((char*)buf).substring(4).toInt();
+            SERIAL_PRINT("Interpreted RSSI: ");
+            SERIAL_PRINTLN(rssi);
 
-            SERIAL_PRINTLN(rssi);  // TODO - remove this once we're sure it works
+            SERIAL_PRINT("Previous Power: ");
+            SERIAL_PRINT(power);
+            SERIAL_PRINTLN(" dBm");
 
             if(rssi > TARGET_RSSI) {
                 power--;
@@ -183,14 +188,18 @@ void loop() {
             }
 
             // Bound the power within the allowed range
-            if(power < 14 ) {
-                power = 14;
+            if(power < -2 ) {
+                power = -2;
             } else if(power > 20) {
                 power = 20;
             }
 
+            SERIAL_PRINT("New Power: ");
+            SERIAL_PRINT(power);
+            SERIAL_PRINTLN(" dBm");
+
             // Set the transmitter power, for the next transmission
-            rf69.setTxPower(power, true);  // range from 14-20 for power, 2nd arg must be true for 69HCW
+            rf69.setTxPower(power, true);  // range from -2 to 20 for power, 2nd arg must be true for 69HCW
 
         } else {
             SERIAL_PRINTLN("*WARNING: No reply from the server");
@@ -202,7 +211,7 @@ void loop() {
 
     // Put the radio to sleep, and then sleep the processor until
     // it's time for the next read.
-    #if 1
+    #ifndef DEBUG_WARM_SLEEP
     rf69.sleep();
     hack_sleep(60000);
     # else
