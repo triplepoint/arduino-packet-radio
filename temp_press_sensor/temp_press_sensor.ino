@@ -52,6 +52,9 @@ int8_t power;
 // to try to reach.
 #define TARGET_RSSI     -60
 
+// How many milliseconds should we sleep between samples?
+#define SAMPLE_PERIOD 30000
+
 // define the dBm low and high limit settings, for the radio
 // transmitter
 #define RADIO_POWER_LIMIT_LOW -2
@@ -239,9 +242,9 @@ void loop() {
     // it's time for the next read.
     #ifndef DEBUG_WARM_SLEEP
     rf69.sleep();
-    hack_sleep(60000);
+    hack_sleep(SAMPLE_PERIOD);
     # else
-    delay(60000);
+    delay(SAMPLE_PERIOD);
     # endif
 }
 
