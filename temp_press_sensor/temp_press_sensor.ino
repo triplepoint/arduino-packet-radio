@@ -53,7 +53,7 @@ int8_t power;
 #define TARGET_RSSI     -60
 
 // How many milliseconds should we sleep between samples?
-#define SAMPLE_PERIOD 30000
+#define SAMPLE_PERIOD 60000
 
 // define the dBm low and high limit settings, for the radio
 // transmitter
