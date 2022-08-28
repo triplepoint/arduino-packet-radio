@@ -3,7 +3,6 @@
 // them onto the serial bus for relaying to a message
 // queue.
 
-#include <SPI.h>
 #include <RH_RF69.h>
 #include <RHReliableDatagram.h>
 
@@ -29,21 +28,6 @@ RHReliableDatagram rf69_manager(rf69, MY_ADDRESS);
 // from sending radios
 uint8_t buf[RH_RF69_MAX_MESSAGE_LEN];
 
-
-void setup() {
-    Serial.begin(115200);
-    while(!Serial) {
-        delay(1);
-    }
-
-    Serial.println("*INFO: Base station bridge startup");
-
-    pinMode(LED, OUTPUT);
-    pinMode(RFM69_RST, OUTPUT);
-    digitalWrite(RFM69_RST, LOW);
-
-    setup_radio();
-}
 
 inline void setup_radio() {
     // manual reset
@@ -78,6 +62,40 @@ inline void setup_radio() {
     Serial.print("*INFO: RFM69 radio @");
     Serial.print((unsigned int)RF69_FREQ);
     Serial.println(" MHz");
+}
+
+
+template<typename T>
+void print_json_val(const char* name, T value) {
+    Serial.print("\"");
+    Serial.print(name);
+    Serial.print("\": \"");
+    Serial.print(value);
+    Serial.print("\"");
+}
+
+inline void blink(byte PIN, byte DELAY_MS, byte loops) {
+    for(byte i=0; i<loops; i++)  {
+        digitalWrite(PIN, HIGH);
+        delay(DELAY_MS);
+        digitalWrite(PIN, LOW);
+        delay(DELAY_MS);
+    }
+}
+
+void setup() {
+    Serial.begin(115200);
+    while(!Serial) {
+        delay(1);
+    }
+
+    Serial.println("*INFO: Base station bridge startup");
+
+    pinMode(LED, OUTPUT);
+    pinMode(RFM69_RST, OUTPUT);
+    digitalWrite(RFM69_RST, LOW);
+
+    setup_radio();
 }
 
 void loop() {
@@ -120,23 +138,5 @@ void loop() {
             // Blink LED 3 times, 40ms between blinks
             blink(LED, 40, 3);
         }
-    }
-}
-
-template<typename T>
-void print_json_val(const char* name, T value) {
-    Serial.print("\"");
-    Serial.print(name);
-    Serial.print("\": \"");
-    Serial.print(value);
-    Serial.print("\"");
-}
-
-void blink(byte PIN, byte DELAY_MS, byte loops) {
-    for(byte i=0; i<loops; i++)  {
-        digitalWrite(PIN, HIGH);
-        delay(DELAY_MS);
-        digitalWrite(PIN, LOW);
-        delay(DELAY_MS);
     }
 }
