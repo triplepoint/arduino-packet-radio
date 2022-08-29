@@ -3,23 +3,20 @@
 // built around the Bosch BME280 sensor.
 //
 
+#include <Arduino.h>
+#include <Adafruit_PM25AQI.h>
 #include <Adafruit_BME280.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_SleepyDog.h>
 #include <RH_RF69.h>
 #include <RHReliableDatagram.h>
+#include <SensirionI2CScd4x.h>
 #include <SPI.h>
 #include <Wire.h>
 
-// Are we doing debug printing to Serial?
-// Note that if we don't do warm sleep below with this,
-// the serial connection will drop after the first cycle
-// and not come back.
-#define DEBUG_PRINT 1
 
-// Should we do a regular sleep that spends more power?
-// Or should we do a full watchdown timer sleep.
-#define DEBUG_WARM_SLEEP 1
+// Are we doing debug printing to Serial?
+#define DEBUG_PRINT 1
 
 // Radio frequency, must match the frequency of other radios.
 #define RF69_FREQ 915.0
@@ -45,6 +42,12 @@ RHReliableDatagram rf69_manager(rf69, MY_ADDRESS);
 
 // I2C BME280 device
 Adafruit_BME280 bme;
+
+// Sensiron SCD41 device
+SensirionI2CScd4x scd4x;
+
+// Plantower PMSA003i sensor
+Adafruit_PM25AQI aqi = Adafruit_PM25AQI();
 
 // A buffer into which we'll write messages
 // from sending radios
@@ -133,6 +136,20 @@ inline void setup_bme280_sensor() {
                     Adafruit_BME280::FILTER_OFF   );
 }
 
+inline void setup_scd41_sensor() {
+    scd4x.begin(Wire);
+
+    // stop potentially previously started measurement
+    scd4x.stopPeriodicMeasurement();
+
+    // Start Measurement
+    scd4x.startPeriodicMeasurement();
+}
+
+inline void setup_pm_sensor() {
+    aqi.begin_I2C();
+}
+
 inline void increase_power() {
     SERIAL_PRINT("*I: Inc power from ");
     SERIAL_PRINT(power);
@@ -184,7 +201,8 @@ inline void blink(byte PIN, byte DELAY_MS, byte loops) {
 // Given a string, pass it over the radio to the base station, and then handle any
 // radio power adjustment, given the RSSI that the base station responds with.
 // Put the radio back to sleep when done.
-inline void send_payload_to_base_station(String radiopacket) {
+inline void send_payload_to_base_station(String &radiopacket) {
+    SERIAL_PRINTLN((String("*I: ") + radiopacket).c_str());
     if(rf69_manager.sendtoWait((uint8_t*)radiopacket.c_str(), radiopacket.length(), DEST_ADDRESS)) {
 
         // Now wait for the RSSI feedback response from the server
@@ -215,49 +233,98 @@ inline void send_payload_to_base_station(String radiopacket) {
         increase_power();
         blink(LED, 40, 5);
     }
+}
 
-    rf69.sleep();
+inline void append_bme280_measurement(String &radiopacket) {
+    radiopacket += String(" T ");
+    radiopacket += bme.readTemperature();  // Deg C
+    radiopacket += String(" P ");
+    radiopacket += bme.readPressure();     // Pascal
+    radiopacket += String(" H ");
+    radiopacket += bme.readHumidity();     // % RH
+}
+
+inline void append_scd41_measurement(String &radiopacket, uint16_t co2, float temperature, float humidity) {
+    // Read Measurement
+    if (co2 == 0) {
+        SERIAL_PRINTLN("*W: Invalid c02 sample, skipping");
+        return;
+    }
+    radiopacket += String(" CO2 ");
+    radiopacket += co2;             // ppm
+    radiopacket += String(" T2 ");
+    radiopacket += temperature;     // Deg2
+    radiopacket += String(" H2 ");
+    radiopacket += humidity;        // % RH
+}
+
+inline void append_pm_measurement_1_4(String &radiopacket, PM25_AQI_Data &data) {
+    // Concentration Units (standard)
+    radiopacket += String(" STD_PM1_0 ");    // PM 1.0
+    radiopacket += data.pm10_standard;
+    radiopacket += String(" STD_PM2_5 ");    // PM 2.5
+    radiopacket += data.pm25_standard;
+    radiopacket += String(" STD_PM10 ");    // PM 10.0
+    radiopacket += data.pm100_standard;
+}
+
+inline void append_pm_measurement_2_4(String &radiopacket, PM25_AQI_Data &data) {
+    // Concentration Units (Environmental)
+    radiopacket += String(" ENV_PM1_0 ");    // PM 1.0
+    radiopacket += data.pm10_env;
+    radiopacket += String(" ENV_PM2_5 ");    // PM 2.5
+    radiopacket += data.pm25_env;
+    radiopacket += String(" ENV_PM10 ");    // PM 10.0
+    radiopacket += data.pm100_env;
+}
+
+inline void append_pm_measurement_3_4(String &radiopacket, PM25_AQI_Data &data) {
+    // Particle Density
+    radiopacket += String(" PRTCL_0_3UM ");    // Particles > 0.3um / 0.1L air
+    radiopacket += data.particles_03um;
+    radiopacket += String(" PRTCL_0_5UM ");    // Particles > 0.5um / 0.1L air
+    radiopacket += data.particles_05um;
+    radiopacket += String(" PRTCL_1_0UM ");    // Particles > 1.0um / 0.1L air
+    radiopacket += data.particles_10um;
+}
+
+inline void append_pm_measurement_4_4(String &radiopacket, PM25_AQI_Data &data) {
+    // Particle Density
+    radiopacket += String(" PRTCL_2_5UM ");    // Particles > 2.5um / 0.1L air
+    radiopacket += data.particles_25um;
+    radiopacket += String(" PRTCL_5_0UM ");    // Particles > 5.0um / 0.1L air
+    radiopacket += data.particles_50um;
+    radiopacket += String(" PRTCL_10_0UM ");    // Particles > 10um / 0.1L air
+    radiopacket += data.particles_100um;
 }
 
 // Read the battery voltage pin
 inline float read_battery_voltage() {
     float measuredvbat = analogRead(VBATPIN);
-    measuredvbat *= 2;    // we divided by 2 in the voltage divider circuit, so multiply back
-    measuredvbat *= 3.3;  // Multiply by 3.3V, our reference voltage
-    measuredvbat /= 1024; // convert ADC count to voltage
+    // we divided by 2 in the voltage divider circuit, so multiply back
+    // Multiply by 3.3V, our reference voltage
+    // Divide by the ADC count per V
+    measuredvbat *= 2 * 3.3 / 1024;
     SERIAL_PRINT("*I: VBat (V): ");
     SERIAL_PRINTLN(measuredvbat);
     return measuredvbat;
 }
 
-// Sleep in 8 second chunks, and then sleep for any remainder
-inline void hack_sleep(uint16_t delay) {
-    while( delay > 8000) {
-        Watchdog.sleep(8000);
-        delay -= 8000;
-    }
-    if( delay > 0) {
-        Watchdog.sleep(delay);
-    }
-}
-
 void setup() {
-    #ifdef DEBUG_PRINT
     Serial.begin(115200);
-    // while(!Serial) {
-    //     delay(1);
-    // }
-    #endif
-
+    delay(1000);
     SERIAL_PRINTLN("*I: startup");
+
+    Wire.begin();
 
     pinMode(LED, OUTPUT);
     pinMode(RFM69_RST, OUTPUT);
     digitalWrite(RFM69_RST, LOW);
 
     setup_radio();
-
     setup_bme280_sensor();
+    setup_scd41_sensor();
+    setup_pm_sensor();
 }
 
 void loop() {
@@ -265,22 +332,40 @@ void loop() {
 
     bme.takeForcedMeasurement();
 
-    // Assemble the sensor and battery data into a payload string
-    String radiopacket = String("VB ");
-    radiopacket += vbat;
-    radiopacket += String(" T ");
-    radiopacket += bme.readTemperature();  // Deg C
-    radiopacket += String(" P ");
-    radiopacket += bme.readPressure();     // Pascal
-    radiopacket += String(" H ");
-    radiopacket += bme.readHumidity();     // % RH
-    SERIAL_PRINTLN((String("*I: ") + radiopacket).c_str());
+    uint16_t scd41_co2;
+    float scd41_temperature;
+    float scd41_humidity;
+    scd4x.readMeasurement(scd41_co2, scd41_temperature, scd41_humidity);
 
+    PM25_AQI_Data pm_data;
+    aqi.read(&pm_data);
+
+    String radiopacket = String("ST 1");
+    radiopacket += String(" VB ");
+    radiopacket += vbat;
     send_payload_to_base_station(radiopacket);
 
-    #ifndef DEBUG_WARM_SLEEP
-    hack_sleep(SAMPLE_PERIOD);
-    # else
+    radiopacket = String("ST 2");
+    append_bme280_measurement(radiopacket);
+    append_scd41_measurement(radiopacket, scd41_co2, scd41_temperature, scd41_humidity);
+    send_payload_to_base_station(radiopacket);
+
+    radiopacket = String("ST 3");
+    append_pm_measurement_1_4(radiopacket, pm_data);
+    send_payload_to_base_station(radiopacket);
+
+    radiopacket = String("ST 4");
+    append_pm_measurement_2_4(radiopacket, pm_data);
+    send_payload_to_base_station(radiopacket);
+
+    radiopacket = String("ST 5");
+    append_pm_measurement_3_4(radiopacket, pm_data);
+    send_payload_to_base_station(radiopacket);
+
+    radiopacket = String("ST 6");
+    append_pm_measurement_4_4(radiopacket, pm_data);
+    send_payload_to_base_station(radiopacket);
+
+    rf69.sleep();
     delay(SAMPLE_PERIOD);
-    # endif
 }
