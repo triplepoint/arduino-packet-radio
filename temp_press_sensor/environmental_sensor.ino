@@ -142,6 +142,12 @@ inline void setup_scd41_sensor() {
     // stop potentially previously started measurement
     scd4x.stopPeriodicMeasurement();
 
+    // Read in the serial number
+    uint16_t serial0;
+    uint16_t serial1;
+    uint16_t serial2;
+    scd4x.getSerialNumber(serial0, serial1, serial2);
+
     // Start Measurement
     scd4x.startPeriodicMeasurement();
 }
@@ -328,44 +334,75 @@ void setup() {
 }
 
 void loop() {
+    // # Measure the power supply voltage
     float vbat = read_battery_voltage();
 
-    bme.takeForcedMeasurement();
+    // # Measure the BME280
+    bool success_bme = true;
+    if (! bme.takeForcedMeasurement()) {
+        SERIAL_PRINTLN("*W: BME280 read fail");
+        success_bme = false;
+    }
 
+    // # Measure the SCD41
+    uint16_t co2_error;
     uint16_t scd41_co2;
     float scd41_temperature;
     float scd41_humidity;
-    scd4x.readMeasurement(scd41_co2, scd41_temperature, scd41_humidity);
+    co2_error = scd4x.readMeasurement(scd41_co2, scd41_temperature, scd41_humidity);
+    if (co2_error) {
+        SERIAL_PRINT("*W: CO2 read fail: ");
+        SERIAL_PRINTLN(co2_error)
+    } else if (scd41_co2 == 0) {
+        SERIAL_PRINTLN("W: CO2 == 0 fail");
+    }
 
+    // # Measure the PM sensor
+    bool success_aqi = true;
     PM25_AQI_Data pm_data;
-    aqi.read(&pm_data);
+    if (! aqi.read(&pm_data)) {
+        SERIAL_PRINTLN("*W: PM read fail");
+        success_aqi = false;
+    }
 
-    String radiopacket = String("ST 1");
-    radiopacket += String(" VB ");
-    radiopacket += vbat;
-    send_payload_to_base_station(radiopacket);
+    String radiopacket = String("");
 
-    radiopacket = String("ST 2");
-    append_bme280_measurement(radiopacket);
-    append_scd41_measurement(radiopacket, scd41_co2, scd41_temperature, scd41_humidity);
-    send_payload_to_base_station(radiopacket);
+    // # If the BME280 sensor successfully read, send it's data
+    if( success_bme ) {
+        radiopacket = String("ST 1");
+        radiopacket += String(" VB ");
+        radiopacket += vbat;
+        append_bme280_measurement(radiopacket);
+        send_payload_to_base_station(radiopacket);
+    }
 
-    radiopacket = String("ST 3");
-    append_pm_measurement_1_4(radiopacket, pm_data);
-    send_payload_to_base_station(radiopacket);
+    // # If the CO2 sensor successfully read, send it's data
+    if (! co2_error && scd41_co2 != 0) {
+        radiopacket = String("ST 2");
+        append_scd41_measurement(radiopacket, scd41_co2, scd41_temperature, scd41_humidity);
+        send_payload_to_base_station(radiopacket);
+    }
 
-    radiopacket = String("ST 4");
-    append_pm_measurement_2_4(radiopacket, pm_data);
-    send_payload_to_base_station(radiopacket);
+    // # If the PM sensor successfully read, send out it's multiple data packets
+    if( success_aqi ) {
+        radiopacket = String("ST 3");
+        append_pm_measurement_1_4(radiopacket, pm_data);
+        send_payload_to_base_station(radiopacket);
 
-    radiopacket = String("ST 5");
-    append_pm_measurement_3_4(radiopacket, pm_data);
-    send_payload_to_base_station(radiopacket);
+        radiopacket = String("ST 4");
+        append_pm_measurement_2_4(radiopacket, pm_data);
+        send_payload_to_base_station(radiopacket);
 
-    radiopacket = String("ST 6");
-    append_pm_measurement_4_4(radiopacket, pm_data);
-    send_payload_to_base_station(radiopacket);
+        radiopacket = String("ST 5");
+        append_pm_measurement_3_4(radiopacket, pm_data);
+        send_payload_to_base_station(radiopacket);
 
+        radiopacket = String("ST 6");
+        append_pm_measurement_4_4(radiopacket, pm_data);
+        send_payload_to_base_station(radiopacket);
+    }
+
+    // # Sleep the radio and wait
     rf69.sleep();
     delay(SAMPLE_PERIOD);
 }
