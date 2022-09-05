@@ -142,11 +142,11 @@ inline void setup_scd41_sensor() {
     // stop potentially previously started measurement
     scd4x.stopPeriodicMeasurement();
 
-    // Read in the serial number
-    uint16_t serial0;
-    uint16_t serial1;
-    uint16_t serial2;
-    scd4x.getSerialNumber(serial0, serial1, serial2);
+    // // Read in the serial number
+    // uint16_t serial0;
+    // uint16_t serial1;
+    // uint16_t serial2;
+    // scd4x.getSerialNumber(serial0, serial1, serial2);
 
     // Start Measurement
     scd4x.startPeriodicMeasurement();
@@ -215,7 +215,7 @@ inline void send_payload_to_base_station(String &radiopacket) {
         uint8_t len = sizeof(buf);
         uint8_t from;
         if (rf69_manager.recvfromAckTimeout(buf, &len, 2000, &from)) {
-            SERIAL_PRINT("*I: Rec. : 0x");
+            SERIAL_PRINT("*I: Rec.: 0x");
             SERIAL_PRINT(from, HEX);
             SERIAL_PRINT(": ");
             SERIAL_PRINTLN((char*)buf);
@@ -232,10 +232,10 @@ inline void send_payload_to_base_station(String &radiopacket) {
             rf69.setTxPower(power, true);  // range from -2 to 20 for power, 2nd arg must be true for 69HCW
 
         } else {
-            SERIAL_PRINTLN("*W: No RSSI from server");
+            SERIAL_PRINTLN("*W: No rec RSSI");
         }
     } else {
-        SERIAL_PRINTLN("*W: Send failed (no ack), increasing power");
+        SERIAL_PRINTLN("*W: no ack, inc power");
         increase_power();
         blink(LED, 40, 5);
     }
@@ -252,10 +252,6 @@ inline void append_bme280_measurement(String &radiopacket) {
 
 inline void append_scd41_measurement(String &radiopacket, uint16_t co2, float temperature, float humidity) {
     // Read Measurement
-    if (co2 == 0) {
-        SERIAL_PRINTLN("*W: Invalid c02 sample, skipping");
-        return;
-    }
     radiopacket += String(" CO2 ");
     radiopacket += co2;             // ppm
     radiopacket += String(" T2 ");
@@ -311,7 +307,7 @@ inline float read_battery_voltage() {
     // Multiply by 3.3V, our reference voltage
     // Divide by the ADC count per V
     measuredvbat *= 2 * 3.3 / 1024;
-    SERIAL_PRINT("*I: VBat (V): ");
+    SERIAL_PRINT("*I: VBat_V: ");
     SERIAL_PRINTLN(measuredvbat);
     return measuredvbat;
 }
@@ -319,7 +315,8 @@ inline float read_battery_voltage() {
 void setup() {
     Serial.begin(115200);
     delay(1000);
-    SERIAL_PRINTLN("*I: startup");
+    SERIAL_PRINTLN("*I: start");
+    delay(1000);
 
     Wire.begin();
 
@@ -338,31 +335,21 @@ void loop() {
     float vbat = read_battery_voltage();
 
     // # Measure the BME280
-    bool success_bme = true;
-    if (! bme.takeForcedMeasurement()) {
-        SERIAL_PRINTLN("*W: BME280 read fail");
-        success_bme = false;
-    }
+    bool success_bme = bme.takeForcedMeasurement();
+
+    // # Measure the PM sensor
+    PM25_AQI_Data pm_data;
+    bool success_aqi = aqi.read(&pm_data);
 
     // # Measure the SCD41
     uint16_t co2_error;
-    uint16_t scd41_co2;
-    float scd41_temperature;
-    float scd41_humidity;
-    co2_error = scd4x.readMeasurement(scd41_co2, scd41_temperature, scd41_humidity);
-    if (co2_error) {
-        SERIAL_PRINT("*W: CO2 read fail: ");
-        SERIAL_PRINTLN(co2_error)
-    } else if (scd41_co2 == 0) {
-        SERIAL_PRINTLN("W: CO2 == 0 fail");
-    }
-
-    // # Measure the PM sensor
-    bool success_aqi = true;
-    PM25_AQI_Data pm_data;
-    if (! aqi.read(&pm_data)) {
-        SERIAL_PRINTLN("*W: PM read fail");
-        success_aqi = false;
+    bool isDataReady = false;
+    uint16_t scd41_co2 = 0;
+    float scd41_temperature = 0.0f;
+    float scd41_humidity = 0.0f;
+    co2_error = scd4x.getDataReadyFlag(isDataReady);
+    if(!co2_error && isDataReady) {
+        co2_error = scd4x.readMeasurement(scd41_co2, scd41_temperature, scd41_humidity);
     }
 
     String radiopacket = String("");
@@ -374,13 +361,20 @@ void loop() {
         radiopacket += vbat;
         append_bme280_measurement(radiopacket);
         send_payload_to_base_station(radiopacket);
+    } else {
+        SERIAL_PRINTLN("*W: TPH fail");
     }
 
     // # If the CO2 sensor successfully read, send it's data
-    if (! co2_error && scd41_co2 != 0) {
+    if (! co2_error && isDataReady && scd41_co2 != 0) {
         radiopacket = String("ST 2");
         append_scd41_measurement(radiopacket, scd41_co2, scd41_temperature, scd41_humidity);
         send_payload_to_base_station(radiopacket);
+    } else {
+        SERIAL_PRINT("*W: CO2 fail: ");
+        SERIAL_PRINT(co2_error);
+        SERIAL_PRINT(" ");
+        SERIAL_PRINTLN(scd41_co2);
     }
 
     // # If the PM sensor successfully read, send out it's multiple data packets
@@ -400,6 +394,8 @@ void loop() {
         radiopacket = String("ST 6");
         append_pm_measurement_4_4(radiopacket, pm_data);
         send_payload_to_base_station(radiopacket);
+    } else {
+        SERIAL_PRINTLN("*W: PM fail");
     }
 
     // # Sleep the radio and wait
