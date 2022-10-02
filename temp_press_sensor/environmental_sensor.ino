@@ -59,7 +59,7 @@ int8_t power;
 
 // The target RSSI which the radio will adjust its power
 // to try to reach.
-#define TARGET_RSSI     -60
+#define TARGET_RSSI     -50
 
 // How many milliseconds should we sleep between samples?
 #define SAMPLE_PERIOD 60000
